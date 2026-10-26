@@ -12,7 +12,7 @@ class Profiler:
         self.start_time = perf_counter()
 
     def stop(self) -> None:
-        if not self.start_time:
+        if self.start_time is None:
             print("Error: Timer not started.")
             return
 
@@ -24,8 +24,11 @@ class Profiler:
         self.start_time = None
 
     def print_report(self) -> None:
-        vaild_index = int(WARMUP_PERCENTAGE * len(self.saved_records))
-        valid_records = self.saved_records[vaild_index:]
+        valid_index = int(WARMUP_PERCENTAGE * len(self.saved_records))
+        valid_records = self.saved_records[valid_index:]
+
+        if not valid_records:
+            return
 
         average     = np.average(valid_records) * 1000
         p50         = np.median(valid_records) * 1000
@@ -41,6 +44,6 @@ class Profiler:
             f"P99  |  {p99:.5f}"
         ]
 
-        print("\n". join(lines))
+        print("\n".join(lines))
 
     
