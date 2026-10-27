@@ -1,3 +1,3 @@
-from profiler import Profiler
+from profiler.core import Profiler
 
 __all__ = ["Profiler"]
