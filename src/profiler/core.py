@@ -1,9 +1,11 @@
 from time import perf_counter
 from contextlib import contextmanager
-import numpy as np
 from collections import defaultdict
+
+import numpy as np
 import matplotlib.pyplot as plt
 
+# Default fraction of records to be not included in final calculations.
 WARMUP_PERCENTAGE = 0.05
 
 # Styles
@@ -24,11 +26,22 @@ STYLES = {
 }
 
 class Profiler:
+    """Lightweight performance profiler with basic data analysis and visualisation."""
     def __init__(self):
         self.saved_records = defaultdict(list)
 
     @contextmanager
     def measure(self, name: str):
+        """Context manager for measuring code block's execution time.
+
+        Args:
+            name: A name to represent a current measurement session.
+
+        Example:
+            >>> profiler = Profiler()
+            >>> with profiler.measure(name="Multiplication"):
+            ...     c = a * b
+        """
         start_time = perf_counter()
 
         try:
@@ -40,7 +53,10 @@ class Profiler:
             self.saved_records[name].append(time)
 
     def print_report(self) -> None:
+        """Prints a table with average, median (P50), P95 and P99 of every recorded measurement session.
+        """
         for measurement_name in self.saved_records:
+            # Discard initial measurements samples to prevent noice from caching and JIT compilation
             valid_index = int(WARMUP_PERCENTAGE * len(self.saved_records[measurement_name]))
             valid_records = self.saved_records[measurement_name][valid_index:]
 
@@ -65,7 +81,14 @@ class Profiler:
 
             print("\n".join(lines))
 
-    def generate_plot(self, names: list[str] | None = None, skip_warmup: bool = True, style: str = "default"):
+    def generate_plot(self, names: list[str] | None = None, skip_warmup: bool = True, style: str = "default") -> None:
+        """Generates and displays a line chart of execution times of selected records
+
+        Args:
+            names: A list of measurement session names to be plotted. If None, all session will be plotted.
+            skip_warmup: if True do not plot the "warm-up" records.
+            style: A string indicating colors used for plotting records (e.g., 'default' or 'catppuccin_mocha')
+        """
         if not names:
             valid_names = list(self.saved_records.keys())
         else:
@@ -83,6 +106,7 @@ class Profiler:
         if style in STYLES:
             slt_style = STYLES[style]  
         else:
+            print("Error: Style not found! Generating using default style.")
             slt_style = STYLES["default"]
 
         plt.figure(figsize=(10, 6), clear=True, facecolor=slt_style["base"])
@@ -104,6 +128,7 @@ class Profiler:
         ax = plt.gca()
         ax.set_facecolor(slt_style["base"])
 
+        # Plot borders styling.
         ax.spines['left'].set_color(slt_style["text"])
         ax.spines['bottom'].set_color(slt_style["text"])
         ax.spines['top'].set_visible(False)
