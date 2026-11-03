@@ -1,7 +1,6 @@
 # TODO:
-# 1. Add support for custom styles made by users (custom style clas?).
+# 1. Add support for custom styles made by users (custom style class?).
 # 2. Make the report table less ugly.
-# 3. Fix the line 104 thing (less zagnieżdżenia)
 
 from time import perf_counter
 from contextlib import contextmanager
@@ -17,7 +16,6 @@ import warnings
 # Default fraction of records to be not included in final calculations.
 WARMUP_PERCENTAGE = 0.05
 
-# Styles
 STYLES = {
     "default": {
         "base": "#ffffff",
@@ -38,6 +36,7 @@ class Profiler:
     """My performance profiler with basic data analysis and visualisation."""
     def __init__(self):
         self.saved_records = defaultdict(list)
+
 
     @contextmanager
     def measure(self, name: str):
@@ -63,14 +62,14 @@ class Profiler:
             time = end_time - start_time # Zobaczyć czy nie równe zero 
             self.saved_records[name].append(time)
 
+
     def print_report(self) -> None:
         """Prints a table with average, median (P50), P95 and P99 of every recorded measurement session."""
         for measurement_name in self.saved_records:
             # Do not include a fraction of measurements samples to prevent noice from caching and JIT compilation
-            valid_index = int(WARMUP_PERCENTAGE * len(self.saved_records[measurement_name]))
-            valid_records = self.saved_records[measurement_name][valid_index:]
+            valid_records = self._get_valid_records(name=measurement_name, skip_warmup= True)
 
-            if not valid_records:
+            if len(valid_records) == 0:
                 warnings.warn(
                     f"Session {measurement_name} has 0 valid records.",
                     category=UserWarning,
@@ -78,10 +77,7 @@ class Profiler:
                 )
                 continue
 
-            average     = np.average(valid_records) * 1000
-            p50         = np.median(valid_records) * 1000
-            p95         = np.percentile(valid_records, 95) * 1000
-            p99         = np.percentile(valid_records, 99) * 1000
+            average, p50, p95, p99 = self._calculate_stats(records=valid_records)
 
             lines = [
                 f"Measurement session name: {measurement_name}\n",
@@ -96,6 +92,7 @@ class Profiler:
 
             print("\n".join(lines))
 
+
     def generate_plot(self, names: list[str] | None = None, skip_warmup: bool = True, style: str = "default") -> None:
         """Generates and displays a line chart of execution times of selected records
 
@@ -104,19 +101,7 @@ class Profiler:
             skip_warmup: if True do not plot the "warm-up" records.
             style: A string indicating colors used for plotting records (e.g., 'default' or 'catppuccin_mocha')
         """
-        if not names:
-            valid_names = list(self.saved_records.keys())
-        else:
-            valid_names = []
-            for n in names:
-                if n in self.saved_records:
-                    valid_names.append(n)
-                else:
-                    warnings.warn(
-                        f"Could not find {n} in records",
-                        category=UserWarning,
-                        stacklevel=2
-                    )
+        valid_names = self._filter_valid_names(names=names)
 
         if not valid_names:
             raise SessionNotFoundError(f"None of the provided session names: {names} exist.")
@@ -134,7 +119,7 @@ class Profiler:
         plt.figure(figsize=(10, 6), clear=True, facecolor=slt_style["base"])
 
         for i, measurement_name in enumerate(valid_names):
-            records = self.saved_records[measurement_name]
+            records = self._get_valid_records(name=measurement_name, skip_warmup=skip_warmup)
             total_samples = len(records)
 
             if total_samples == 0:
@@ -145,14 +130,60 @@ class Profiler:
                 )
                 continue
 
-            valid_index = int(WARMUP_PERCENTAGE * total_samples) if skip_warmup else 0
-
-            x_values = np.arange(valid_index, total_samples)
-            y_values = np.asarray(records[valid_index:]) * 1000
+            x_values = np.arange(1, total_samples + 1)
+            y_values = np.asarray(records) * 1000
             
             plt.plot(x_values, y_values, label=measurement_name, color=slt_style["main"][i % len(slt_style["main"])])
 
         ax = plt.gca()
+
+        self._set_plot_style(ax=ax, slt_style=slt_style)
+        
+        plt.show()
+        plt.close()
+
+
+    def _get_valid_records(self, name: str, skip_warmup: bool = True) -> np.ndarray:
+        records = self.saved_records[name]
+
+        if not records:
+            return np.asarray([])
+
+        valid_index = int(WARMUP_PERCENTAGE * len(records)) if skip_warmup else 0
+
+        return np.asarray(records[valid_index:])
+
+    
+    def _calculate_stats(self, records: np.ndarray) -> tuple[float, float, float, float]:
+        average = np.average(records) * 1000
+        p50     = np.median(records) * 1000
+        p95     = np.percentile(records, 95) * 1000
+        p99     = np.percentile(records, 99) * 1000
+
+        return average, p50, p95, p99
+
+
+    def _filter_valid_names(self, names: list[str] | None) -> list[str]:
+        if not names:
+            return list(self.saved_records.keys())
+
+        valid_names = []
+
+        for n in names:
+            if n in self.saved_records:
+                valid_names.append(n)
+                continue
+
+            warnings.warn(
+                f"Could not find {n} in records",
+                category=UserWarning,
+                stacklevel=3
+            )
+
+        return valid_names
+
+
+    def _set_plot_style(self, ax: plt.Axes, slt_style: dict) -> None:
         ax.set_facecolor(slt_style["base"])
 
         # Plot borders styling.
@@ -168,6 +199,3 @@ class Profiler:
 
         plt.legend(loc="best", labelcolor=slt_style["text"], facecolor=slt_style["base"], draggable=True)
         plt.grid(True, linestyle="--", c=slt_style["grid"])
-        
-        plt.show()
-        plt.close()
