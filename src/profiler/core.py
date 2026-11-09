@@ -1,6 +1,9 @@
 # TODO:
 # 1. Add support for custom styles made by users (custom style class?).
 # 2. Make the report table less ugly.
+# 3. Change "style" to "theme"
+# 4. add funtionf for warringins
+# 5. add a dataclass for report stats - too much of a mess rn
 
 from time import perf_counter
 from contextlib import contextmanager
@@ -12,6 +15,8 @@ from .exceptions import ProfilerError, SessionNotFoundError
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
+
+import rich
 
 # Default fraction of records to be not included in final calculations.
 WARMUP_PERCENTAGE = 0.05
@@ -30,6 +35,11 @@ STYLES = {
         "grid": "#313244",
         "main": ["#cba6f7", "#f38ba8", "#fab387", "#a6e3a1", "#89b4fa", "#f5e0dc", "#f5c2e7", "#eba0ac", "#f9e2af", "#94e2d5"]
     }
+}
+
+RENDER_OPTIONS = {
+    "basic" # using regular print statements
+    # "rich" # using rich library - might not work on older terminal emulators
 }
 
 class Profiler:
@@ -63,13 +73,30 @@ class Profiler:
             self.saved_records[name].append(time)
 
 
-    def print_report(self) -> None:
+    def print_report(self, names: list[str] | None = None, render: str = "basic") -> None:
         """Prints a table with average, median (P50), P95 and P99 of every recorded measurement session."""
-        for measurement_name in self.saved_records:
+        valid_names = self._filter_valid_names(names=names)
+
+        if not valid_names:
+            raise SessionNotFoundError(f"None of the provided session names: {names} have been found while printing report.")
+
+        if render in RENDER_OPTIONS:
+            slt_render = render
+        else:
+            warnings.warn(
+                f"Render option {render} not found! Printing using default, basic style",
+                category=UserWarning,
+                stacklevel=2
+            )
+
+        for measurement_name in valid_names:
             # Do not include a fraction of measurements samples to prevent noice from caching and JIT compilation
             valid_records = self._get_valid_records(name=measurement_name, skip_warmup= True)
+            
+            num = len(self.saved_records[measurement_name])
+            valid_num = len(valid_records)
 
-            if len(valid_records) == 0:
+            if valid_num == 0:
                 warnings.warn(
                     f"Session {measurement_name} has 0 valid records.",
                     category=UserWarning,
@@ -79,18 +106,7 @@ class Profiler:
 
             average, p50, p95, p99 = self._calculate_stats(records=valid_records)
 
-            lines = [
-                f"Measurement session name: {measurement_name}\n",
-                "----------------",
-                "Test |  Time, ms",
-                "----------------",
-                f"AVG  |  {average:.5f}",
-                f"P50  |  {p50:.5f}",
-                f"P95  |  {p95:.5f}",
-                f"P99  |  {p99:.5f}\n"
-            ]
-
-            print("\n".join(lines))
+            self._print_basic_report_table(measurement_name, num, valid_num, average, p50, p95, p99)
 
 
     def generate_plot(self, names: list[str] | None = None, skip_warmup: bool = True, style: str = "default") -> None:
@@ -104,7 +120,7 @@ class Profiler:
         valid_names = self._filter_valid_names(names=names)
 
         if not valid_names:
-            raise SessionNotFoundError(f"None of the provided session names: {names} exist.")
+            raise SessionNotFoundError(f"None of the provided session names: {names} have been found while generating a plot.")
 
         if style in STYLES:
             slt_style = STYLES[style]  
@@ -156,11 +172,31 @@ class Profiler:
     
     def _calculate_stats(self, records: np.ndarray) -> tuple[float, float, float, float]:
         average = np.average(records) * 1000
-        p50     = np.median(records) * 1000
-        p95     = np.percentile(records, 95) * 1000
-        p99     = np.percentile(records, 99) * 1000
+        p50, p95, p99 = np.percentile(records, [50, 95, 99]) * 1000
 
         return average, p50, p95, p99
+
+
+    def _print_basic_report_table(self, name: str, number_of_records: int, number_of_valid: int, 
+                                    average: float, p50: float, p95:float, p99:float) -> None:
+        lines = [
+                f"Measurement session name: {name}",
+                f"All records:    |  {number_of_records}",
+                f"Valid records:  |  {number_of_valid}\n",
+                "----------------",
+                "Test |  Time, ms",
+                "----------------",
+                f"AVG  |  {average:.5f}",
+                f"P50  |  {p50:.5f}",
+                f"P95  |  {p95:.5f}",
+                f"P99  |  {p99:.5f}\n"
+            ]
+
+        print("\n".join(lines))
+
+
+    def _print_rich_report_table(self):
+        pass
 
 
     def _filter_valid_names(self, names: list[str] | None) -> list[str]:
