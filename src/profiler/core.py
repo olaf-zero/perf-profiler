@@ -1,13 +1,16 @@
 # TODO:
 # 1. Add support for custom styles made by users (custom style class?).
-# 2. Make the report table less ugly.
 # 3. Change "style" to "theme"
 # 4. add funtionf for warringins
-# 5. add a dataclass for report stats - too much of a mess rn
 
 from time import perf_counter
+
 from contextlib import contextmanager
 from collections import defaultdict
+from dataclasses import dataclass
+
+from rich.table import Table
+from rich.console import Console
 
 # Custom Profiler exceptions
 from .exceptions import ProfilerError, SessionNotFoundError
@@ -15,8 +18,6 @@ from .exceptions import ProfilerError, SessionNotFoundError
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
-
-import rich
 
 # Default fraction of records to be not included in final calculations.
 WARMUP_PERCENTAGE = 0.05
@@ -38,14 +39,25 @@ STYLES = {
 }
 
 RENDER_OPTIONS = {
-    "basic" # using regular print statements
-    # "rich" # using rich library - might not work on older terminal emulators
+    "basic",    # using regular print statements
+    "rich"      # using rich library - might not work on older terminal emulators
 }
+
+@dataclass
+class SessionData:
+    name: str                   # name of the session
+    number_of_records: int      # number of all records
+    number_of_valid: int        # number of all records decreased by the warmup measurements
+    statistics: dict[str, float]     # dictionary of values calculated that represent the session
+
 
 class Profiler:
     """My performance profiler with basic data analysis and visualisation."""
     def __init__(self):
         self.saved_records = defaultdict(list)
+        self.table = Table()
+        self._init_rich_report_table()
+        self.console = Console()
 
 
     @contextmanager
@@ -88,6 +100,7 @@ class Profiler:
                 category=UserWarning,
                 stacklevel=2
             )
+            slt_render = "basic"
 
         for measurement_name in valid_names:
             # Do not include a fraction of measurements samples to prevent noice from caching and JIT compilation
@@ -104,10 +117,18 @@ class Profiler:
                 )
                 continue
 
-            average, p50, p95, p99 = self._calculate_stats(records=valid_records)
+            calculated_session_stats = self._calculate_stats(records=valid_records)
 
-            self._print_basic_report_table(measurement_name, num, valid_num, average, p50, p95, p99)
+            session_data = SessionData(measurement_name, num, valid_num, calculated_session_stats)
 
+            if slt_render == "basic":
+                self._print_basic_report_table(session_data)
+            elif slt_render == "rich":
+                self._add_rich_table_row(session_data)
+        
+        if slt_render == "rich":
+            self.console.print(self.table)
+            self._reset_rich_table()
 
     def generate_plot(self, names: list[str] | None = None, skip_warmup: bool = True, style: str = "default") -> None:
         """Generates and displays a line chart of execution times of selected records
@@ -170,33 +191,55 @@ class Profiler:
         return np.asarray(records[valid_index:])
 
     
-    def _calculate_stats(self, records: np.ndarray) -> tuple[float, float, float, float]:
+    def _calculate_stats(self, records: np.ndarray) -> dict[str, float]:
         average = np.average(records) * 1000
         p50, p95, p99 = np.percentile(records, [50, 95, 99]) * 1000
 
-        return average, p50, p95, p99
+        return {"Average": average, "Median": p50, "P95": p95, "P99": p99}
 
 
-    def _print_basic_report_table(self, name: str, number_of_records: int, number_of_valid: int, 
-                                    average: float, p50: float, p95:float, p99:float) -> None:
-        lines = [
-                f"Measurement session name: {name}",
-                f"All records:    |  {number_of_records}",
-                f"Valid records:  |  {number_of_valid}\n",
-                "----------------",
-                "Test |  Time, ms",
-                "----------------",
-                f"AVG  |  {average:.5f}",
-                f"P50  |  {p50:.5f}",
-                f"P95  |  {p95:.5f}",
-                f"P99  |  {p99:.5f}\n"
-            ]
-
-        print("\n".join(lines))
+    def _reset_rich_table(self) -> None:
+        self.table = Table()
+        self._init_rich_report_table()
 
 
-    def _print_rich_report_table(self):
-        pass
+    def _print_basic_report_table(self, session_data: SessionData) -> None:
+        session_info = [
+            f"Measurement session name: {session_data.name}",
+            f"All records: {session_data.number_of_records}",
+            f"Valid records: {session_data.number_of_valid}\n",
+        ]
+
+        stats_header = [
+            "-----------------",
+            "Test  -  Time, ms",
+            "-----------------"
+        ]
+
+        stats = [f"{key}  -  {value:.5f}" for key, value in session_data.statistics.items()]
+
+        print("\n".join(session_info + stats_header + stats) + "\n\n")
+
+
+    def _init_rich_report_table(self) -> None:
+        # self.table.title("All measurement sessions")
+
+        self.table.add_column("Name", justify="center")
+        self.table.add_column("Num of records", justify="center")
+        self.table.add_column("Valid records", justify="center")
+        self.table.add_column("Average, ms", justify="center")
+        self.table.add_column("Median, ms", justify="center")
+        self.table.add_column("P95, ms", justify="center")
+        self.table.add_column("P99, ms", justify="center")
+
+    
+    def _add_rich_table_row(self, session_data: SessionData) -> None:
+        session_info = [session_data.name, session_data.number_of_records, session_data.number_of_valid]
+        calculated_stats = [f"{value:.5f}" for value in session_data.statistics.values()]
+
+        full_row = map(str, session_info + calculated_stats)
+
+        self.table.add_row(*full_row)
 
 
     def _filter_valid_names(self, names: list[str] | None) -> list[str]:
