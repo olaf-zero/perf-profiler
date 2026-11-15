@@ -6,7 +6,7 @@
 from time import perf_counter
 
 from contextlib import contextmanager
-from collections import defaultdict
+from collections import defaultdict, ChainMap
 from dataclasses import dataclass, fields
 
 from rich.table import Table
@@ -114,6 +114,7 @@ class Profiler:
         self.saved_records = defaultdict(list)
         self.builtin_themes = BUILTIN_THEMES
         self.user_themes = {}
+        self._all_themes = ChainMap(self.user_themes, self.builtin_themes)
 
 
     @contextmanager
@@ -206,22 +207,9 @@ class Profiler:
             raise SessionNotFoundError(f"None of the provided session names: {names} have been found while generating a plot.")
 
         if isinstance(theme, Theme):
-            self.register_theme(theme=theme)
-            theme_name = theme.nama
+            slt_theme = theme
         else:
-            theme_name = theme
-
-        all_themes = self.builtin_themes | self.user_themes
-
-        if theme_name not in all_themes.keys():
-            warnings.warn(
-                f"Theme {theme_name} not found! Generating using default theme",
-                category=UserWarning,
-                stacklevel=2
-            )
-            slt_theme = all_themes["default"]
-        else:
-            slt_theme = all_themes[theme_name]
+            slt_theme = self._get_theme_from_name(theme)
 
         plt.figure(figsize=(10, 6), clear=True, facecolor=slt_theme.base)
 
@@ -252,6 +240,18 @@ class Profiler:
     
     def register_theme(self, theme: Theme) -> None:
         self.user_themes[theme.name] = theme
+
+
+    def _get_theme_from_name(self, theme_name: str) -> Theme:
+        if theme_name not in self._all_themes:
+            warnings.warn(
+                f"Theme {theme_name} not found! Generating using default theme",
+                category=UserWarning,
+                stacklevel=3
+            )
+            return self._all_themes["default"]
+        else:
+            return self._all_themes[theme_name]
 
 
     def _get_valid_records(self, name: str, skip_warmup: bool = True) -> np.ndarray:
