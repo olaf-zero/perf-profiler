@@ -8,9 +8,11 @@ from time import perf_counter
 from contextlib import contextmanager
 from collections import defaultdict, ChainMap
 from dataclasses import dataclass, fields
+from types import MappingProxyType
 
 from rich.table import Table
 from rich.console import Console
+from rich.style import Style as RichStyle
 
 # Custom Profiler exceptions
 from .exceptions import ProfilerError, SessionNotFoundError
@@ -45,12 +47,6 @@ class Theme:
             name = field.name
             value = getattr(self, name)
 
-            if name == "name":
-                if len(value) == 0:
-                    raise ThemeError("Theme name must exist.")
-
-                continue
-
             if name == "main":
                 if isinstance(value, str):
                     value = [value]
@@ -64,10 +60,18 @@ class Theme:
                     raise ThemeError("List of main colors is empty.")
 
                 for color in value:
-                    if not self._check_color(color):
+                    if not isinstance(color, str) or not self._check_color(color):
                         raise ColorNotFoundError(f"{color} is invalid")
-
+            elif name == "name":
+                if not isinstance(value, str):
+                    raise ThemeError("Theme name must be a string.")
+                
+                if len(value) == 0:
+                    raise ThemeError("Theme name must exist.")
             else:
+                if not isinstance(value, str):
+                    raise ThemeError(f"{name} must be a string.")
+
                 if not self._check_color(value):
                     raise ColorNotFoundError(f"{value} is invalid")
 
@@ -87,25 +91,26 @@ class SessionData:
     statistics: dict[str, float]    # dictionary of values calculated that represent the session
 
 
-BUILTIN_THEMES = {
-    "default": 
-        Theme(
-        name="default",
-        base="#ffffff", 
-        text="#000000", 
-        grid="#e0e0e0", 
-        main=["#0055ff", "#ff0033", "#00cc44", "#ff9900", "#9900cc", "#00cccc", "#ff0099", "#996600", "#003399", "#cc0000", 
-            "#008000", "#e67e22", "#6c5ce7", "#16a085", "#e84393", "#d35400", "#2c3e50", "#27ae60", "#8e44ad", "#f1c40f"]
-        ),
-    "catppuccin_mocha":
-        Theme(
-        name="catppuccin_mocha",
-        base="#1e1e2e", 
-        text="#cdd6f4", 
-        grid="#313244", 
-        main=["#cba6f7", "#f38ba8", "#fab387", "#a6e3a1", "#89b4fa", "#f5e0dc", "#f5c2e7", "#eba0ac", "#f9e2af", "#94e2d5"]
-        )
-}
+BUILTIN_THEMES = MappingProxyType({
+        "default": 
+            Theme(
+            name="default",
+            base="#ffffff", 
+            text="#000000", 
+            grid="#e0e0e0", 
+            main=["#0055ff", "#ff0033", "#00cc44", "#ff9900", "#9900cc", "#00cccc", "#ff0099", "#996600", "#003399", "#cc0000", 
+                "#008000", "#e67e22", "#6c5ce7", "#16a085", "#e84393", "#d35400", "#2c3e50", "#27ae60", "#8e44ad", "#f1c40f"]
+            ),
+        "catppuccin_mocha":
+            Theme(
+            name="catppuccin_mocha",
+            base="#1e1e2e", 
+            text="#cdd6f4", 
+            grid="#313244", 
+            main=["#cba6f7", "#f38ba8", "#fab387", "#a6e3a1", "#89b4fa", "#f5e0dc", "#f5c2e7", "#eba0ac", "#f9e2af", "#94e2d5"]
+            )
+    }
+)
 
 
 class Profiler:
@@ -142,7 +147,7 @@ class Profiler:
             self.saved_records[name].append(time)
 
 
-    def print_report(self, names: list[str] | None = None, render: str = "basic") -> None:
+    def print_report(self, names: list[str] | None = None, render: str = "basic", theme: str | Theme | None = None) -> None:
         """Prints a table with average, median (P50), P95 and P99 of every recorded measurement session."""
         valid_names = self._filter_valid_names(names=names)
 
@@ -158,6 +163,17 @@ class Profiler:
                 stacklevel=2
             )
             slt_render = "basic"
+
+        if theme is not None and slt_render == "rich":
+            if isinstance(theme, Theme):
+                slt_theme = theme
+            else:
+                found, slt_theme = self._get_theme_from_name(theme)
+                if not found:
+                    slt_theme = None
+
+        if theme is None: 
+            slt_theme = None
 
         sessions: list[SessionData] = []
 
@@ -188,9 +204,13 @@ class Profiler:
         if slt_render == "rich":
             if not sessions:
                 return
-
-            console = Console()
-            console.print(self._get_rich_report_table(sessions))
+            if slt_theme is None:
+                console = Console()
+                console.print(self._get_rich_report_table(sessions))
+            else:
+                console = Console()
+                table_to_print = self._get_rich_report_table(sessions, theme=slt_theme)
+                console.print(table_to_print)
             
 
     def generate_plot(self, names: list[str] | None = None, skip_warmup: bool = True, theme: str | Theme = "default") -> None:
@@ -209,7 +229,7 @@ class Profiler:
         if isinstance(theme, Theme):
             slt_theme = theme
         else:
-            slt_theme = self._get_theme_from_name(theme)
+            _, slt_theme = self._get_theme_from_name(theme)
 
         plt.figure(figsize=(10, 6), clear=True, facecolor=slt_theme.base)
 
@@ -242,16 +262,16 @@ class Profiler:
         self.user_themes[theme.name] = theme
 
 
-    def _get_theme_from_name(self, theme_name: str) -> Theme:
-        if theme_name not in self._all_themes:
+    def _get_theme_from_name(self, theme_name: str) -> tuple[bool, Theme]:
+        if theme_name not in list(self._all_themes):
             warnings.warn(
                 f"Theme {theme_name} not found! Generating using default theme",
                 category=UserWarning,
                 stacklevel=3
             )
-            return self._all_themes["default"]
+            return (False, self._all_themes["default"])
         else:
-            return self._all_themes[theme_name]
+            return (True, self._all_themes[theme_name])
 
 
     def _get_valid_records(self, name: str, skip_warmup: bool = True) -> np.ndarray:
@@ -303,8 +323,28 @@ class Profiler:
         print("\n".join(session_info + stats_header + stats) + "\n\n")
 
 
-    def _get_rich_report_table(self, sessions: list[SessionData]) -> Table:
-        table = Table()
+    def _get_rich_report_table(self, sessions: list[SessionData], theme: Theme | None = None) -> Table:
+        if theme:
+            normal_theme = RichStyle(
+                color=theme.text,
+                bgcolor=theme.base
+            )
+
+            header_theme = RichStyle(
+                color=theme.text,
+                bgcolor=theme.base,
+                bold=True
+            )
+
+            row_themes = [RichStyle(color=color, bgcolor=theme.base) for color in theme.main]
+
+            table = Table(
+                style=normal_theme,
+                header_style=header_theme,
+                row_styles=row_themes
+            )
+        else:
+            table = Table()
 
         table.add_column("Name", justify="center")
         table.add_column("Num of records", justify="center")
